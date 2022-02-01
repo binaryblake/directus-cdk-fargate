@@ -1,4 +1,4 @@
-import { SecretValue, Stack, StackProps } from "aws-cdk-lib";
+import { Duration, SecretValue, Stack, StackProps } from "aws-cdk-lib";
 import {
   Peer,
   Port,
@@ -6,7 +6,7 @@ import {
   SubnetType,
   Vpc,
 } from "aws-cdk-lib/aws-ec2";
-import { Cluster, ContainerImage } from "aws-cdk-lib/aws-ecs";
+import { CfnService, Cluster, ContainerImage } from "aws-cdk-lib/aws-ecs";
 import { ApplicationLoadBalancedFargateService } from "aws-cdk-lib/aws-ecs-patterns";
 import { DatabaseClusterEngine, ServerlessCluster } from "aws-cdk-lib/aws-rds";
 import { Secret } from "aws-cdk-lib/aws-secretsmanager";
@@ -51,6 +51,7 @@ export class DirectusCdkStack extends Stack {
 
     const cluster = new Cluster(this, "cluster", {
       clusterName: "directus",
+      enableFargateCapacityProviders: true,
       vpc,
     });
 
@@ -58,11 +59,12 @@ export class DirectusCdkStack extends Stack {
       this,
       "directus-service",
       {
-        desiredCount: 2,
+        desiredCount: 1,
         cluster,
         taskSubnets: {
           subnets: privateSubnets.subnets,
         },
+        healthCheckGracePeriod: Duration.seconds(10),
         taskImageOptions: {
           image: ContainerImage.fromAsset("."),
           containerPort: 8055,
@@ -83,6 +85,15 @@ export class DirectusCdkStack extends Stack {
         },
       }
     );
+
+    // escape hatch required to use fargate with spot as a capacity provider
+    const cfnService = service.service.node.defaultChild as CfnService;
+    cfnService.capacityProviderStrategy = [
+      {
+        weight: 1,
+        capacityProvider: "FARGATE_SPOT",
+      },
+    ];
 
     service.targetGroup.configureHealthCheck({
       path: "/server/health",
